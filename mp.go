@@ -101,14 +101,27 @@ func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start i
 			totalBw += singleSample[i]
 		}
 		tot := end - start
+		zeroIdx := -1
 		for i := range singleSample {
+			// round down, so no oversubscription
 			singleSample[i] = int64(float32(tot) * (float32(singleSample[i]) / float32(totalBw)))
+			if singleSample[i] == 0 {
+				zeroIdx = i
+			}
 		}
 		var currSum int64
 		for _, d := range singleSample {
 			currSum += d
 		}
-		singleSample[0] += int64(end - start) - currSum
+		if zeroIdx == -1 {
+			zeroIdx = 0
+		}
+		singleSample[zeroIdx] += int64(end-start) - currSum
+		if singleSample[zeroIdx] == 0 {
+			// steal one byte from previous split
+			singleSample[(zeroIdx-1)%nConns] -= 1
+			singleSample[zeroIdx] += 1
+		}
 
 		currStart := start
 		for idx := range ranges {
