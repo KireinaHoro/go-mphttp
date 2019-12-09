@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	minSplitSize = 2 << 10
+	minSplitSize = 4 << 10
 	// bwSampleInterval controls the interval of bandwidth estimation
 	// also the interval of graphing data output
 	bwSampleInterval = 10 * time.Millisecond
@@ -101,26 +101,33 @@ func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start i
 			totalBw += singleSample[i]
 		}
 		tot := end - start
-		zeroIdx := -1
+		var zeroIndices []int
 		for i := range singleSample {
 			// round down, so no oversubscription
 			singleSample[i] = int64(float32(tot) * (float32(singleSample[i]) / float32(totalBw)))
 			if singleSample[i] == 0 {
-				zeroIdx = i
+				zeroIndices = append(zeroIndices, i)
 			}
 		}
 		var currSum int64
 		for _, d := range singleSample {
 			currSum += d
 		}
-		if zeroIdx == -1 {
-			zeroIdx = 0
-		}
-		singleSample[zeroIdx] += int64(end-start) - currSum
-		if singleSample[zeroIdx] == 0 {
-			// steal one byte from previous split
-			singleSample[(zeroIdx-1)%nConns] -= 1
-			singleSample[zeroIdx] += 1
+		singleSample[0] += int64(end-start) - currSum
+		if len(zeroIndices) != 0 {
+			biggestIdx := 0
+			biggestSize := singleSample[0]
+			for idx := range singleSample {
+				if biggestSize < singleSample[idx] {
+					biggestSize = singleSample[idx]
+					biggestIdx = idx
+				}
+			}
+			for _, id := range zeroIndices {
+				// steal one byte from the biggest split
+				singleSample[biggestIdx] -= 1
+				singleSample[id] += 1
+			}
 		}
 
 		currStart := start
