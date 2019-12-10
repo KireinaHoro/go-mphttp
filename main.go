@@ -12,6 +12,9 @@ import (
 const (
 	serverCount    = 3
 	requestTimeout = 5 * time.Second
+	plotFile       = "plot.gnu"
+	plotWidth      = 800
+	plotHeight     = 600
 )
 
 var args struct {
@@ -53,18 +56,25 @@ func main() {
 	}
 
 	resps, conns := make([]responseStream, serverCount), make([]MonitoredMpConn, serverCount)
+	connsReady := make([]chan struct{}, serverCount)
+	for idx := range connsReady {
+		connsReady[idx] = make(chan struct{})
+	}
 	for i := 0; i < serverCount; i++ {
-		resps[i], conns[i] = <-respCh, <-connCh
-		defer conns[i].Close()
+		go func(i int) {
+			resps[i], conns[i] = <-respCh, <-connCh
+			close(connsReady[i])
+		}(i)
 	}
 	// resps and conns are sorted in order of earlier completion
 
+	<-connsReady[0]
 	response := resps[0].response
 	length := getTotalLength(response)
 	fmt.Printf("Total length: %d\n", length)
 
 	buf := make([]byte, length)
-	nSplitRequest(args.Path, conns, nil, 0, length, buf, &resps[0])
+	nSplitRequest(args.Path, conns, connsReady, nil, 0, length, buf, &resps[0])
 	duration := time.Since(globalStart)
 
 	fmt.Printf("Download finished, writing output...")
@@ -78,5 +88,20 @@ func main() {
 
 	for idx := range connDataMap.m {
 		connDataMap.m[idx].Close()
+		conns[idx].Close()
 	}
+
+	fmt.Printf("Writing %s...", plotFile)
+	plotF, err := os.OpenFile(plotFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	defer plotF.Close()
+	fatal("plot file", err)
+	fmt.Fprintf(plotF, `set terminal png transparent enhanced font "arial,10" fontscale 1.0 size %d, %d
+set output 'gnuplot.png'
+set style increment default
+set style data lines
+set xlabel 'time elapsed (ms)'
+set ylabel 'byte range (Kb)'
+plot [0:%d][0:%d] "0.dat" title '0' with points, "1.dat" title '1' with points, "2.dat" title '2' with points`,
+		plotWidth, plotHeight, int64(duration / time.Millisecond), length)
+	fmt.Printf("...done\n")
 }

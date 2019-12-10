@@ -24,13 +24,15 @@ func UnrangedGetWithCancel(url string) (*http.Request, func()) {
 
 func DoubleRangedGet(url string, start, end int) *http.Request {
 	req := UnrangedGet(url)
-	req.Header.Add("range", fmt.Sprintf("bytes=%d-%d", start, end))
+	// per RFC 7233, byte ranges are inclusive
+	req.Header.Add("range", fmt.Sprintf("bytes=%d-%d", start, end-1))
 	return req
 }
 
 func DoubleRangedGetWithCancel(url string, start, end int) (*http.Request, func()) {
 	req, cancel := UnrangedGetWithCancel(url)
-	req.Header.Add("range", fmt.Sprintf("bytes=%d-%d", start, end))
+	// per RFC 7233, byte ranges are inclusive
+	req.Header.Add("range", fmt.Sprintf("bytes=%d-%d", start, end-1))
 	return req, cancel
 }
 
