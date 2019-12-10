@@ -23,8 +23,8 @@ var globalStart time.Time
 // at startup phase a response for the full content will be started to fetch length (we can save
 // 1 RTT by using GET instead of HEAD).  Pass that response as firstResponse.
 // if bw == nil, we do not have bandwidth data yet, so split equally
-func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start int, end int, buf []byte,
-	firstResponse *responseStream) {
+func nSplitRequest(url string, conns []MonitoredMpConn, connsReady []chan struct{},
+	bw []*BwCounter, start int, end int, buf []byte, firstResponse *responseStream) {
 	if start > end {
 		log.Panicf("nSplitRequest start=%d end=%d", start, end)
 	}
@@ -46,13 +46,14 @@ func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start i
 		// issue on all connections, see who finishes first
 		bufChan := make(chan taggedBuf)
 		resps := make([]*http.Response, nConns)
-		for idx, conn := range conns {
+		for idx := range conns {
 			go func(idx int) {
 				req := DoubleRangedGet(url, start, end)
 				if idx == 0 && firstResponse != nil {
 					resps[idx] = firstResponse.response
 				} else {
-					resps[idx] = conn.StartRequest(req).response
+					<-connsReady[idx]
+					resps[idx] = conns[idx].StartRequest(req).response
 				}
 				buf := make([]byte, resps[idx].ContentLength)
 				_, err := io.ReadFull(resps[idx].Body, buf)
@@ -140,7 +141,8 @@ func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start i
 	fmt.Println(ranges)
 
 	readyResps := make(chan taggedResponseStream)
-	for idx, conn := range conns {
+	for idx := range conns {
+		<-connsReady[idx]
 		if idx == 0 && firstResponse != nil {
 			// choke the existing request
 			//bytes := ranges[idx].end - ranges[idx].start
@@ -154,12 +156,12 @@ func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start i
 		} else {
 			// start a new request
 			req := DoubleRangedGet(url, ranges[idx].start, ranges[idx].end)
-			go func(idx int, conn MonitoredMpConn) {
+			go func(idx int) {
 				readyResps <- taggedResponseStream{
 					idx: idx,
-					rs:  conn.StartRequest(req),
+					rs:  conns[idx].StartRequest(req),
 				}
-			}(idx, conn)
+			}(idx)
 		}
 	}
 
@@ -310,7 +312,7 @@ func nSplitRequest(url string, conns []MonitoredMpConn, bw []*BwCounter, start i
 	//fmt.Printf("fragRanges: %v\n", fragRanges)
 	for _, frag := range fragRanges {
 		//fmt.Printf("Restarting for %d-%d\n", frag.start, frag.end)
-		nSplitRequest(url, conns, newBwCounters, frag.start, frag.end, buf, nil)
+		nSplitRequest(url, conns, connsReady, newBwCounters, frag.start, frag.end, buf, nil)
 	}
 
 	// do not return until all transfers are ready.

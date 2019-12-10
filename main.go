@@ -53,18 +53,25 @@ func main() {
 	}
 
 	resps, conns := make([]responseStream, serverCount), make([]MonitoredMpConn, serverCount)
+	connsReady := make([]chan struct{}, serverCount)
+	for idx := range connsReady {
+		connsReady[idx] = make(chan struct{})
+	}
 	for i := 0; i < serverCount; i++ {
-		resps[i], conns[i] = <-respCh, <-connCh
-		defer conns[i].Close()
+		go func(i int) {
+			resps[i], conns[i] = <-respCh, <-connCh
+			close(connsReady[i])
+		}(i)
 	}
 	// resps and conns are sorted in order of earlier completion
 
+	<-connsReady[0]
 	response := resps[0].response
 	length := getTotalLength(response)
 	fmt.Printf("Total length: %d\n", length)
 
 	buf := make([]byte, length)
-	nSplitRequest(args.Path, conns, nil, 0, length, buf, &resps[0])
+	nSplitRequest(args.Path, conns, connsReady, nil, 0, length, buf, &resps[0])
 	duration := time.Since(globalStart)
 
 	fmt.Printf("Download finished, writing output...")
@@ -78,5 +85,6 @@ func main() {
 
 	for idx := range connDataMap.m {
 		connDataMap.m[idx].Close()
+		conns[idx].Close()
 	}
 }
