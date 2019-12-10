@@ -12,6 +12,9 @@ import (
 const (
 	serverCount    = 3
 	requestTimeout = 5 * time.Second
+	plotFile       = "plot.gnu"
+	plotWidth      = 800
+	plotHeight     = 600
 )
 
 var args struct {
@@ -87,4 +90,18 @@ func main() {
 		connDataMap.m[idx].Close()
 		conns[idx].Close()
 	}
+
+	fmt.Printf("Writing %s...", plotFile)
+	plotF, err := os.OpenFile(plotFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	defer plotF.Close()
+	fatal("plot file", err)
+	fmt.Fprintf(plotF, `set terminal png transparent enhanced font "arial,10" fontscale 1.0 size %d, %d
+set output 'gnuplot.png'
+set style increment default
+set style data lines
+set xlabel 'time elapsed (ms)'
+set ylabel 'byte range (Kb)'
+plot [0:%d][0:%d] "0.dat" title '0' with points, "1.dat" title '1' with points, "2.dat" title '2' with points`,
+		plotWidth, plotHeight, int64(duration / time.Millisecond), length)
+	fmt.Printf("...done\n")
 }
